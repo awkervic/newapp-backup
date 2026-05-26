@@ -26,7 +26,7 @@ impl Scheduler {
 
     pub fn start_loop(&self, app: AppHandle) {
         let jobs = self.jobs.clone();
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             // Align with the start of the next minute
             let now = Local::now();
             let seconds_to_wait = 60 - now.second();
@@ -59,7 +59,7 @@ impl Scheduler {
 
                 for task in tasks_to_run {
                     let app_clone = app.clone();
-                    tokio::spawn(async move {
+                    tauri::async_runtime::spawn(async move {
                         let _ = execute_backup(app_clone, task).await;
                     });
                 }

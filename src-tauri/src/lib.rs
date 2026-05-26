@@ -28,7 +28,7 @@ async fn backup_start(config: BackupTask, app: AppHandle, state: tauri::State<'_
     
     // Execute backup asynchronously in a separate task
     let app_clone = app.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let _ = execute_backup(app_clone, config).await;
     });
 
@@ -44,7 +44,7 @@ async fn backup_run_all(app: AppHandle, state: tauri::State<'_, AppState>) -> Re
 
     for task in tasks_to_run {
         let app_clone = app.clone();
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             let _ = execute_backup(app_clone, task).await;
         });
     }
@@ -132,7 +132,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     };
                     for task in tasks_to_run {
                         let app_clone = app.clone();
-                        tokio::spawn(async move {
+                        tauri::async_runtime::spawn(async move {
                             let _ = execute_backup(app_clone, task).await;
                         });
                     }
