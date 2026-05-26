@@ -1,0 +1,19 @@
+appId: com.newapp.backup
+productName: NewApp Backup
+directories:
+  output: release
+icon: resources/icon.png
+files:
+  - dist/**/*
+  - src/renderer/dist/**/*
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
