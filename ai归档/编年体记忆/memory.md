@@ -3,7 +3,7 @@
 ## 📋 项目概况 (Project Overview)
 - **项目名称:** NewApp Backup
 - **核心架构:** React 19 + Vite 6 + Tailwind CSS v4 + Tauri v2 + Rust
-- **重构目的:** 解决旧 Electron 架构安装包臃肿 (~97MB) 与 RAM 开销过大 (~150MB) 痛点，重构后包体积降至 **~10MB**，RAM 降至 **~30MB**。
+- **重构目的:** 解决旧 Electron 架构安装包臃肿 (~97MB) 与 RAM 开销过大 (~150MB) 痛点，重构后包体积降至 **2.9MB**，RAM 降至 **~30MB**。
 
 ---
 

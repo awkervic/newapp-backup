@@ -7,7 +7,7 @@
 #### 变动详情：
 1. **安装包体积革命：** 
    - 将主进程从 Node.js 彻底切换为 Rust，彻底剔除 Chromium 浏览器和 Node 庞大内核。
-   - 包体积由原 Electron 的 **97MB 压缩到约 10MB**，RAM 占用由 **135MB 降至 ~26MB**。
+   - 包体积由原 Electron 的 **97MB 压缩到 2.9MB**，RAM 占用由 **135MB 降至 ~26MB**。
 2. **“零触碰”桥接层：**
    - 创建 `tauri-bridge.ts` 完美包裹 Electron 的 `window.api` 接口。
    - **React 前端界面组件无需修改任何一行代码**，即可无感直连 Rust 后端 Commands 和 Events。
