@@ -80,43 +80,49 @@ function drawIconPixels(size: number): Buffer {
   }
 
   // Draw a white "B" letter at center
-  // 16px: center at (7,7), letter ~5x7
-  const letter: [number, number][] = [
-    // Vertical bar of B
-    [5, 3], [5, 4], [5, 5], [5, 6], [5, 7], [5, 8], [5, 9], [5, 10], [5, 11],
-    // Top curve
-    [6, 3], [7, 3], [8, 3],
-    [9, 4],
-    // Middle curve
-    [6, 7], [7, 7], [8, 7],
-    [9, 6], [9, 8],
-    // Bottom curve
-    [6, 11], [7, 11], [8, 11],
-    [9, 10],
-  ];
+  const letter: [number, number][] = [];
 
-  // Adjust for 32px size
-  if (size === 32) {
-    letter.length = 0;
-    // Simplified 32px "B"
-    for (let yy = 6; yy <= 25; yy++) {
-      letter.push([9, yy]); // vertical bar
+  if (size >= 32) {
+    // Scale "B" proportionally
+    const s = size / 32;
+    const vertX = Math.round(9 * s);
+    const midTop = Math.round(6 * s);
+    const midMid = Math.round(15 * s);
+    const midBot = Math.round(25 * s);
+    const rightX = Math.round(21 * s);
+    const gap1 = Math.round(10 * s);
+    const gap2 = Math.round(11 * s);
+
+    for (let yy = midTop; yy <= midBot; yy++) {
+      letter.push([vertX, yy]);
     }
-    for (let xx = 10; xx <= 20; xx++) {
-      letter.push([xx, 6]); // top horizontal
+    for (let xx = vertX + 1; xx <= rightX; xx++) {
+      letter.push([xx, midTop]);
     }
-    for (let xx = 10; xx <= 20; xx++) {
-      letter.push([xx, 15]); // middle horizontal
+    for (let xx = vertX + 1; xx <= rightX; xx++) {
+      letter.push([xx, midMid]);
     }
-    for (let xx = 10; xx <= 20; xx++) {
-      letter.push([xx, 25]); // bottom horizontal
+    for (let xx = vertX + 1; xx <= rightX; xx++) {
+      letter.push([xx, midBot]);
     }
-    for (let yy = 7; yy <= 14; yy++) {
-      if (yy !== 10 && yy !== 11) letter.push([21, yy]);
+    for (let yy = midTop + 1; yy < midMid; yy++) {
+      if (yy !== gap1 && yy !== gap2) letter.push([rightX, yy]);
     }
-    for (let yy = 16; yy <= 24; yy++) {
-      if (yy !== 19 && yy !== 20) letter.push([21, yy]);
+    for (let yy = midMid + 1; yy < midBot; yy++) {
+      if (yy !== gap1 && yy !== gap2) letter.push([rightX, yy]);
     }
+  } else {
+    // 16px: center at (7,7), letter ~5x7
+    const coords: [number, number][] = [
+      [5, 3], [5, 4], [5, 5], [5, 6], [5, 7], [5, 8], [5, 9], [5, 10], [5, 11],
+      [6, 3], [7, 3], [8, 3],
+      [9, 4],
+      [6, 7], [7, 7], [8, 7],
+      [9, 6], [9, 8],
+      [6, 11], [7, 11], [8, 11],
+      [9, 10],
+    ];
+    letter.push(...coords);
   }
 
   for (const [lx, ly] of letter) {
@@ -139,7 +145,7 @@ export function getAppIconPath(): string {
   if (!fs.existsSync(p)) {
     const dir = path.dirname(p);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const png = createPng(32, 32, drawIconPixels(32));
+    const png = createPng(256, 256, drawIconPixels(256));
     fs.writeFileSync(p, png);
   }
   return p;

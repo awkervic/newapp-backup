@@ -14,8 +14,9 @@
     "lint": "eslint src/"
   },
   "dependencies": {
+    "7zip-bin": "^5.2.0",
     "archiver": "^7.0.1",
-    "extract-zip": "^2.0.1",
+    "archiver-utils": "^5.0.2",
     "node-schedule": "^2.1.1",
     "webdav": "^5.7.1"
   },

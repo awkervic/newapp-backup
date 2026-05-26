@@ -1,34 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm --version)",
-      "Bash(git --version)",
-      "Bash(npm install *)",
-      "Bash(npx tsc *)",
-      "Bash(npx vite *)",
-      "Skill(update-config)",
-      "Bash(npm run *)",
-      "Bash(npx electron *)",
-      "Bash(npx electron-rebuild *)",
-      "Bash(node node_modules/electron/install.js)",
-      "Bash(node -e \"require\\('electron'\\)\")",
-      "Bash(ELECTRON_MIRROR=\"https://npmmirror.com/mirrors/electron/\" node node_modules/electron/install.js)",
-      "Bash(ELECTRON_MIRROR=\"https://cdn.npmmirror.com/binaries/electron/\" npx electron --version)",
-      "Bash(node -e \"console.log\\(require\\('./node_modules/electron/package.json'\\).version\\)\")",
-      "Bash(curl *)",
-      "Bash(cd /tmp)",
-      "Bash(unzip -o electron.zip -d \"D:/123123123123/newapp-backup/node_modules/electron/dist\")",
-      "Bash(node -e \"const e=require\\('electron'\\); console.log\\('Electron path:', e\\)\")",
-      "Bash(tasklist)",
-      "Bash(node -e \"console.log\\(JSON.stringify\\(require\\('electron'\\)\\)\\)\")",
-      "Bash(tasklist //FI \"IMAGENAME eq electron.exe\")",
-      "Bash(taskkill //F //IM electron.exe)",
-      "Bash(gh auth *)",
-      "Bash(git init *)",
-      "Bash(git remote *)",
-      "Bash(git ls-remote *)",
-      "Bash(git config *)",
-      "Bash(git add *)"
-    ]
+      "Bash(*)",
+      "Edit(*)",
+      "Write(*)",
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill(*)"
+    ],
+    "defaultMode": "acceptEdits"
   }
 }

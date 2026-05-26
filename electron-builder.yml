@@ -3,17 +3,13 @@ productName: NewApp Backup
 directories:
   output: release
 icon: resources/icon.png
-files:
-  - dist/**/*
-  - src/renderer/dist/**/*
 win:
+  sign: false
   target:
-    - target: nsis
+    - target: portable
       arch:
         - x64
-  artifactName: ${productName}-Setup-${version}.${ext}
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  createDesktopShortcut: true
-  createStartMenuShortcut: true
+  artifactName: ${productName}-Portable-${version}.${ext}
+portable:
+  artifactName: ${productName}-Portable-${version}.exe
+  requestExecutionLevel: user
