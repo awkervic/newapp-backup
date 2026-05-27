@@ -5,15 +5,15 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  root: "src/renderer",
+  root: "src",
   base: "./",
   build: {
-    outDir: "../../dist/renderer",
+    outDir: "../dist",
     emptyOutDir: true,
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "src/renderer/src"),
+      "@": path.resolve(__dirname, "src"),
     },
   },
   server: {
