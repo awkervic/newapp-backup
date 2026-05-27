@@ -10,7 +10,7 @@
 ## 📅 编年史事件快�?(Chronicle Events)
 
 - **[2026-05-26] 架构大洗�?*：旧架构 Electron 过于臃肿。在 Antigravity AI 的强力协作下，全面弃�?Electron，拥�?**Tauri v2 + Rust** 轻量化新框架，以达成�?0MB以内安装包”目标�?
-- **[2026-05-26] 零触碰前端桥�?*：在前端 React 引入 [tauri-bridge.ts](src/renderer/src/tauri-bridge.ts)，并将其中挂载在 `window.api` 全局变量上，�?[main.tsx](src/renderer/src/main.tsx#L1-L15) 入口首行引入。实现了 React UI 核心组件无需改写任何一行代码即可无感迁移�?
+- **[2026-05-26] 零触碰前端桥�?*：在前端 React 引入 [tauri-bridge.ts](src/tauri-bridge.ts)，并将其中挂载在 `window.api` 全局变量上，�?[main.tsx](src/main.tsx#L1-L15) 入口首行引入。实现了 React UI 核心组件无需改写任何一行代码即可无感迁移�?
 - **[2026-05-26] Rust 后端重写**：在 Rust 侧实现了�?Electron TypeScript 主进程的全部功能核心�?
   - **Tray 托盘菜单 ([lib.rs](src-tauri/src/lib.rs))**：实现系统关闭窗口拦截（最小化至托盘）与双击还原、右键菜单项�?
   - **AppData 配置存储 ([settings.rs](src-tauri/src/settings.rs))**：读写保�?JSON 格式系统设置�?
@@ -20,3 +20,4 @@
 - **[2026-05-26] 遗留垃圾清扫**：彻底删�?Electron 旧时代废弃配置文件（`electron-builder.yml`, `tsconfig.main.json`, `tsconfig.preload.json`）和源目录（`src/main/`, `src/preload/`），清理并优�?`package.json` 的冗余依赖与脚本�?
 - **[2026-05-26] 文档沉淀�?Git 推�?*：精心书写极具开源极客色彩的 [README.md](README.md) �?[CHANGELOG.md](CHANGELOG.md)，执�?Git 提交，并**顺利推送至 GitHub 远程主分�?(`master`)**�?
 - **[2026-05-26] 编译环境协助**：自动下载并静默配置本地 Rust 编译环境（stable-x86_64-pc-windows-msvc）。诊断出 Windows SDK 缺失问题，并给出了手动勾�?Visual Studio Installer 组件的极简修复指南�?
+- **[2026-05-27] 代码结构优化与扁平化**：对前端代码结构进行深度重构优化。将 React 前端源文件从 nested Electron 式的 `src/renderer/src/` 完全移至扁平规范�?`src/` 目录下，并将 `index.html` 移入 `src/index.html`。同步更新了 `vite.config.ts`、`tsconfig.json` �?`tauri.conf.json` 里的路径配置。删除了多余空文件夹 `src/renderer` �?`extracted`。完�?`npm run build:renderer` 编译校验，并将重构完整提交并**成功推送至 GitHub master 分支**�?
