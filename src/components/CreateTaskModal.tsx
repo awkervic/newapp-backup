@@ -150,7 +150,7 @@ export function CreateTaskModal({ task, onClose, onSave }: Props) {
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="例如: 挡墙备份"
+              placeholder="请输入备份名称"
               className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 text-sm"
               required
             />
