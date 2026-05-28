@@ -21,3 +21,6 @@
 - **[2026-05-26] 文档沉淀�?Git 推�?*：精心书写极具开源极客色彩的 [README.md](README.md) �?[CHANGELOG.md](CHANGELOG.md)，执�?Git 提交，并**顺利推送至 GitHub 远程主分�?(`master`)**�?
 - **[2026-05-26] 编译环境协助**：自动下载并静默配置本地 Rust 编译环境（stable-x86_64-pc-windows-msvc）。诊断出 Windows SDK 缺失问题，并给出了手动勾�?Visual Studio Installer 组件的极简修复指南�?
 - **[2026-05-27] 代码结构优化与扁平化**：对前端代码结构进行深度重构优化。将 React 前端源文件从 nested Electron 式的 `src/renderer/src/` 完全移至扁平规范�?`src/` 目录下，并将 `index.html` 移入 `src/index.html`。同步更新了 `vite.config.ts`、`tsconfig.json` �?`tauri.conf.json` 里的路径配置。删除了多余空文件夹 `src/renderer` �?`extracted`。完�?`npm run build:renderer` 编译校验，并将重构完整提交并**成功推送至 GitHub master 分支**�?
+
+* [2026-05-28] ���ܿ�����ʵ�ֱ��������б����õı��� JSON �־û���֧����Ӧ��ж���Զ����������ļ��� (src-tauri/src/lib.rs, src/App.tsx)
+* [2026-05-28] ���ܿ�����ʵ��ϵͳ�����Զ����ݹ��ܣ�֧�ִ�����ݱ���/WebDAV�������Զ��� WebDAV ��Ŀ¼���½� config-backup Ŀ¼�����ϴ� (src-tauri/src/backup.rs, src/components/SettingsPanel.tsx)
