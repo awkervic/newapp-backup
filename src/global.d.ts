@@ -57,6 +57,7 @@ export interface BackupApi {
   app: {
     minimizeToTray: () => Promise<void>;
     onBackupProgress: (callback: (progress: any) => void) => () => void;
+    onFileDrop: (callback: (paths: string[]) => void) => () => void;
   };
 }
 

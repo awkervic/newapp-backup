@@ -36,6 +36,18 @@ export default function App() {
   const [editingTask, setEditingTask] = useState<Task | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
+  const [draggedPaths, setDraggedPaths] = useState<string[] | undefined>(undefined);
+
+  // Listen for file drop events
+  useEffect(() => {
+    const unsubscribe = window.api.app.onFileDrop((paths) => {
+      if (paths && paths.length > 0) {
+        setDraggedPaths(paths);
+        setShowCreateModal(true);
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   // Listen for backup progress from main process
   useEffect(() => {
@@ -249,7 +261,11 @@ export default function App() {
 
       {showCreateModal && (
         <CreateTaskModal
-          onClose={() => setShowCreateModal(false)}
+          initialSourcePaths={draggedPaths}
+          onClose={() => {
+            setShowCreateModal(false);
+            setDraggedPaths(undefined);
+          }}
           onSave={addTask}
         />
       )}

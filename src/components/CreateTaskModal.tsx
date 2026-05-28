@@ -13,14 +13,25 @@ interface WebdavPreset {
 
 interface Props {
   task?: Task;
+  initialSourcePaths?: string[];
   onClose: () => void;
   onSave: (task: Omit<Task, "id" | "status">) => void;
 }
 
-export function CreateTaskModal({ task, onClose, onSave }: Props) {
+export function CreateTaskModal({ task, initialSourcePaths, onClose, onSave }: Props) {
   const isEdit = !!task;
-  const [name, setName] = useState(task?.name ?? "");
-  const [sourcePaths, setSourcePaths] = useState<string[]>(task?.sourcePaths ?? []);
+  const [name, setName] = useState(() => {
+    if (task?.name) return task.name;
+    if (initialSourcePaths && initialSourcePaths.length > 0) {
+      const firstPath = initialSourcePaths[0];
+      const baseName = firstPath.split(/[\\/]/).filter(Boolean).pop() || "";
+      return baseName ? `${baseName} 备份` : "新备份任务";
+    }
+    return "";
+  });
+  const [sourcePaths, setSourcePaths] = useState<string[]>(
+    task?.sourcePaths ?? initialSourcePaths ?? []
+  );
   const [destType, setDestType] = useState<"local" | "webdav">(task?.destination.type ?? "local");
   const [destPath, setDestPath] = useState(
     task?.destination.type === "local" ? task.destination.path : ""

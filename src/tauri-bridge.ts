@@ -33,6 +33,21 @@ const tauriApi = {
         }
       };
     },
+    onFileDrop: (callback: (paths: string[]) => void) => {
+      let unlistenFn: (() => void) | undefined;
+      listen<any>("tauri://drag-drop", (event) => {
+        if (event.payload && Array.isArray(event.payload.paths)) {
+          callback(event.payload.paths);
+        }
+      }).then((fn) => {
+        unlistenFn = fn;
+      });
+      return () => {
+        if (unlistenFn) {
+          unlistenFn();
+        }
+      };
+    },
   },
 };
 
