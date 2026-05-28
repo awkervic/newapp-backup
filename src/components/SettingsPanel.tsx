@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 
+import { Task } from "../App";
+
 interface WebdavPreset {
   id: string;
   name: string;
@@ -10,18 +12,35 @@ interface WebdavPreset {
 
 interface Props {
   onClose: () => void;
+  configBackupTask?: Task;
+  onSaveConfigBackup: (task: Omit<Task, "id" | "status"> | null) => Promise<void>;
+  onStartConfigBackup: () => Promise<void>;
 }
 
 function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
-export function SettingsPanel({ onClose }: Props) {
+export function SettingsPanel({ 
+  onClose,
+  configBackupTask,
+  onSaveConfigBackup,
+  onStartConfigBackup
+}: Props) {
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   const [startOnBoot, setStartOnBoot] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [webdavPresets, setWebdavPresets] = useState<WebdavPreset[]>([]);
   const [loaded, setLoaded] = useState(false);
+
+  // Configuration backup states
+  const [configEnabled, setConfigEnabled] = useState(false);
+  const [destType, setDestType] = useState<"local" | "webdav">("local");
+  const [localPath, setLocalPath] = useState<string>("");
+  const [selectedWebdavId, setSelectedWebdavId] = useState<string>("");
+  const [backupFrequency, setBackupFrequency] = useState<"daily" | "weekly" | "manual">("daily");
+  const [backupHour, setBackupHour] = useState<number>(3);
+  const [backupDayOfWeek, setBackupDayOfWeek] = useState<number>(1);
 
   // New preset form
   const [showForm, setShowForm] = useState(false);
@@ -35,10 +54,115 @@ export function SettingsPanel({ onClose }: Props) {
       setMinimizeToTray(s.minimizeToTray);
       setStartOnBoot(s.startOnBoot);
       setTheme(s.theme || "dark");
-      setWebdavPresets(s.webdavPresets || []);
+      const presets = s.webdavPresets || [];
+      setWebdavPresets(presets);
       setLoaded(true);
     });
   }, []);
+
+  useEffect(() => {
+    if (configBackupTask) {
+      setConfigEnabled(true);
+      setDestType(configBackupTask.destination.type || "local");
+      
+      if (configBackupTask.destination.type === "webdav") {
+        const match = webdavPresets.find(p => p.url === configBackupTask.destination.webdavUrl);
+        if (match) {
+          setSelectedWebdavId(match.id);
+        } else if (webdavPresets.length > 0) {
+          setSelectedWebdavId(webdavPresets[0].id);
+        }
+      } else {
+        setLocalPath(configBackupTask.destination.path || "");
+      }
+      
+      if (configBackupTask.schedule) {
+        const parts = configBackupTask.schedule.split(" ");
+        if (parts.length >= 5) {
+          const hour = parseInt(parts[1]) || 0;
+          setBackupHour(hour);
+          
+          if (parts[4] !== "*") {
+            setBackupFrequency("weekly");
+            setBackupDayOfWeek(parseInt(parts[4]) || 1);
+          } else {
+            setBackupFrequency("daily");
+          }
+        }
+      } else {
+        setBackupFrequency("manual");
+      }
+    } else {
+      setConfigEnabled(false);
+      setDestType("local");
+      setLocalPath("");
+      if (webdavPresets.length > 0 && !selectedWebdavId) {
+        setSelectedWebdavId(webdavPresets[0].id);
+      }
+    }
+  }, [configBackupTask, webdavPresets]);
+
+  const handleSaveConfigBackup = (
+    enabled: boolean,
+    dType: "local" | "webdav",
+    webdavId: string,
+    locPath: string,
+    freq: "daily" | "weekly" | "manual",
+    hour: number,
+    dow: number
+  ) => {
+    if (!enabled) {
+      onSaveConfigBackup(null);
+      return;
+    }
+    
+    let dest: any = { type: dType, path: "" };
+    if (dType === "webdav") {
+      const preset = webdavPresets.find(p => p.id === webdavId);
+      if (!preset) return;
+      dest = {
+        type: "webdav",
+        path: "",
+        webdavUrl: preset.url,
+        webdavUser: preset.username,
+        webdavPassword: preset.password
+      };
+    } else {
+      if (!locPath) return; // Empty path doesn't save yet
+      dest = {
+        type: "local",
+        path: locPath
+      };
+    }
+    
+    let cron: string | undefined = undefined;
+    if (freq === "daily") {
+      cron = `0 ${hour} * * *`;
+    } else if (freq === "weekly") {
+      cron = `0 ${hour} * * ${dow}`;
+    }
+    
+    onSaveConfigBackup({
+      name: "应用配置备份",
+      sourcePaths: [], 
+      destination: dest,
+      options: {
+        format: "zip",
+        compressionLevel: 5
+      },
+      schedule: cron,
+      lastBackup: configBackupTask?.lastBackup
+    });
+  };
+
+  async function selectLocalPath() {
+    const paths = await window.api.dialog.openDirectory();
+    if (paths && paths.length > 0) {
+      const path = paths[0];
+      setLocalPath(path);
+      handleSaveConfigBackup(configEnabled, destType, selectedWebdavId, path, backupFrequency, backupHour, backupDayOfWeek);
+    }
+  }
 
   function save(next: {
     minimizeToTray?: boolean;
@@ -163,6 +287,217 @@ export function SettingsPanel({ onClose }: Props) {
                 </div>
               </button>
             </div>
+          </div>
+
+          {/* 配置备份 */}
+          <div className="space-y-4 pt-4 border-t border-gray-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-200">系统配置备份</p>
+                <p className="text-xs text-gray-500">自动备份软件的任务配置和通用设置到 WebDAV</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !configEnabled;
+                  setConfigEnabled(next);
+                  if (next && webdavPresets.length > 0 && !selectedWebdavId) {
+                    const firstId = webdavPresets[0].id;
+                    setSelectedWebdavId(firstId);
+                    handleSaveConfigBackup(next, destType, firstId, localPath, backupFrequency, backupHour, backupDayOfWeek);
+                  } else {
+                    handleSaveConfigBackup(next, destType, selectedWebdavId, localPath, backupFrequency, backupHour, backupDayOfWeek);
+                  }
+                }}
+                className={`w-10 h-5 rounded-full transition-colors ${configEnabled ? "bg-blue-600" : "bg-gray-700"}`}
+              >
+                <div className={`w-4 h-4 rounded-full bg-white transition-transform mt-0.5 ${configEnabled ? "translate-x-5" : "translate-x-0.5"}`} />
+              </button>
+            </div>
+
+            {configEnabled && (
+              <div className="space-y-4 p-4 rounded-xl border border-gray-800 bg-gray-955/30">
+                {/* 目的地类型 Segmented Control */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-gray-400">备份目的地类型</label>
+                  <div className="flex rounded-lg bg-gray-850 p-0.5 border border-gray-700">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDestType("local");
+                        handleSaveConfigBackup(configEnabled, "local", selectedWebdavId, localPath, backupFrequency, backupHour, backupDayOfWeek);
+                      }}
+                      className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                        destType === "local" ? "bg-blue-600 text-white shadow-sm" : "text-gray-400 hover:text-gray-205"
+                      }`}
+                    >
+                      本地文件夹
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDestType("webdav");
+                        let wId = selectedWebdavId;
+                        if (!wId && webdavPresets.length > 0) {
+                          wId = webdavPresets[0].id;
+                          setSelectedWebdavId(wId);
+                        }
+                        handleSaveConfigBackup(configEnabled, "webdav", wId, localPath, backupFrequency, backupHour, backupDayOfWeek);
+                      }}
+                      className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                        destType === "webdav" ? "bg-blue-600 text-white shadow-sm" : "text-gray-400 hover:text-gray-205"
+                      }`}
+                    >
+                      WebDAV 云端
+                    </button>
+                  </div>
+                </div>
+
+                {/* 本地选择路径 */}
+                {destType === "local" && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-gray-400">本地备份文件夹</label>
+                    <div className="flex gap-2">
+                      <input
+                        readOnly
+                        value={localPath}
+                        placeholder="点击右侧按钮选择保存目录"
+                        className="flex-1 px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-300 text-sm focus:outline-none placeholder-gray-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={selectLocalPath}
+                        className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm rounded-lg border border-gray-700 transition-colors shrink-0 cursor-pointer"
+                      >
+                        浏览...
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* WebDAV 选择路径 */}
+                {destType === "webdav" && (
+                  <div className="space-y-1.5">
+                    {webdavPresets.length === 0 ? (
+                      <p className="text-xs text-amber-400">⚠️ 请先在下方添加 WebDAV 预设，然后选择它来保存配置备份。</p>
+                    ) : (
+                      <>
+                        <label className="text-xs text-gray-400">选择 WebDAV 备份目的地</label>
+                        <select
+                          value={selectedWebdavId}
+                          onChange={(e) => {
+                            const nextId = e.target.value;
+                            setSelectedWebdavId(nextId);
+                            handleSaveConfigBackup(configEnabled, destType, nextId, localPath, backupFrequency, backupHour, backupDayOfWeek);
+                          }}
+                          className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:outline-none focus:border-blue-500"
+                        >
+                          {webdavPresets.map(p => (
+                            <option key={p.id} value={p.id}>{p.name} ({p.url})</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* 只有在配置完备的情况下才展示频率和状态 */}
+                {((destType === "local" && localPath) || (destType === "webdav" && webdavPresets.length > 0)) && (
+                  <>
+                    {/* 备份频率 */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-gray-400">备份频率</label>
+                        <select
+                          value={backupFrequency}
+                          onChange={(e) => {
+                            const nextFreq = e.target.value as any;
+                            setBackupFrequency(nextFreq);
+                            handleSaveConfigBackup(configEnabled, destType, selectedWebdavId, localPath, nextFreq, backupHour, backupDayOfWeek);
+                          }}
+                          className="w-full px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="daily">每天自动备份</option>
+                          <option value="weekly">每周自动备份</option>
+                          <option value="manual">仅手动备份</option>
+                        </select>
+                      </div>
+
+                      {backupFrequency !== "manual" && (
+                        <div className="space-y-1.5">
+                          <label className="text-xs text-gray-400">触发时间</label>
+                          <div className="flex gap-2">
+                            {backupFrequency === "weekly" && (
+                              <select
+                                value={backupDayOfWeek}
+                                onChange={(e) => {
+                                  const nextDow = parseInt(e.target.value);
+                                  setBackupDayOfWeek(nextDow);
+                                  handleSaveConfigBackup(configEnabled, destType, selectedWebdavId, localPath, backupFrequency, backupHour, nextDow);
+                                }}
+                                className="flex-1 px-2 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:outline-none focus:border-blue-500"
+                              >
+                                <option value="1">周一</option>
+                                <option value="2">周二</option>
+                                <option value="3">周三</option>
+                                <option value="4">周四</option>
+                                <option value="5">周五</option>
+                                <option value="6">周六</option>
+                                <option value="0">周日</option>
+                              </select>
+                            )}
+                            <select
+                              value={backupHour}
+                              onChange={(e) => {
+                                const nextHour = parseInt(e.target.value);
+                                setBackupHour(nextHour);
+                                handleSaveConfigBackup(configEnabled, destType, selectedWebdavId, localPath, backupFrequency, nextHour, backupDayOfWeek);
+                              }}
+                              className="flex-1 px-2 py-2 rounded-lg bg-gray-800 border border-gray-700 text-gray-200 text-sm focus:outline-none focus:border-blue-500"
+                            >
+                              {Array.from({ length: 24 }).map((_, i) => (
+                                <option key={i} value={i}>{i.toString().padStart(2, '0')}:00</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 状态与触发操作 */}
+                    <div className="pt-2 border-t border-gray-800/60 flex items-center justify-between">
+                      <div className="min-w-0">
+                        {configBackupTask?.lastBackup ? (
+                          <p className="text-[11px] text-gray-500 truncate">上次备份：{configBackupTask.lastBackup}</p>
+                        ) : (
+                          <p className="text-[11px] text-gray-500 italic">从未备份过</p>
+                        )}
+                        {configBackupTask?.status === "running" && (
+                          <p className="text-[11px] text-blue-400 animate-pulse mt-0.5">
+                            正在备份中... {configBackupTask.progress?.percent !== undefined ? `${configBackupTask.progress.percent}%` : ""}
+                          </p>
+                        )}
+                        {configBackupTask?.status === "completed" && (
+                          <p className="text-[11px] text-green-400 mt-0.5">上次备份成功</p>
+                        )}
+                        {configBackupTask?.status === "error" && (
+                          <p className="text-[11px] text-red-400 mt-0.5">上次备份失败</p>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={onStartConfigBackup}
+                        disabled={configBackupTask?.status === "running"}
+                        className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg disabled:opacity-40 transition-colors flex items-center gap-1 shrink-0 cursor-pointer"
+                      >
+                        {configBackupTask?.status === "running" ? "正在备份" : "立即备份"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
           {/* WebDAV presets */}

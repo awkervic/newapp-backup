@@ -59,6 +59,17 @@ fn app_temp_dir() -> PathBuf {
 }
 
 pub async fn execute_backup(app: AppHandle, task: BackupTask) -> Result<(), String> {
+    let mut task = task;
+    if task.id == "__app_config_backup__" {
+        let app_data = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let settings_file = app_data.join("app-settings.json");
+        let tasks_file = app_data.join("app-tasks.json");
+        
+        task.source_paths = vec![
+            settings_file.to_string_lossy().to_string(),
+            tasks_file.to_string_lossy().to_string(),
+        ];
+    }
     let task_id = task.id.clone();
     let now = Local::now();
     let date_str = now.format("%Y-%m-%d_%H-%M-%S").to_string();
@@ -212,7 +223,8 @@ pub async fn execute_backup(app: AppHandle, task: BackupTask) -> Result<(), Stri
 
     // 2. Upload to WebDAV if destination is WebDAV
     if task.destination.r#type == "webdav" {
-        if let Err(e) = upload_to_webdav(&archive_path, &backup_file_name, &task.destination).await {
+        let is_config_backup = task.id == "__app_config_backup__";
+        if let Err(e) = upload_to_webdav(&archive_path, &backup_file_name, &task.destination, is_config_backup).await {
             let err_msg = format!("上传至 WebDAV 失败: {}", e);
             emit_progress(0, "备份失败", "error", Some(err_msg.clone()));
             return Err(err_msg);
@@ -227,16 +239,30 @@ async fn upload_to_webdav(
     local_path: &Path,
     remote_file_name: &str,
     destination: &Destination,
+    is_config_backup: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let webdav_url = destination.webdav_url.as_ref().ok_or("Missing WebDAV URL")?;
     let user = destination.webdav_user.as_deref().unwrap_or("");
     let password = destination.webdav_password.as_deref().unwrap_or("");
 
-    let mut upload_url = webdav_url.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    let mut base_url = webdav_url.trim_end_matches('/').to_string();
+
+    if is_config_backup {
+        // Try creating config-backup folder in the root path using MKCOL
+        let folder_url = format!("{}/config-backup", base_url);
+        let mut mkcol_req = client.request(reqwest::Method::from_bytes(b"MKCOL")?, &folder_url);
+        if !user.is_empty() {
+            mkcol_req = mkcol_req.basic_auth(user, Some(password));
+        }
+        let _ = mkcol_req.send().await;
+        base_url = folder_url;
+    }
+
+    let mut upload_url = base_url;
     upload_url.push('/');
     upload_url.push_str(remote_file_name);
 
-    let client = reqwest::Client::new();
     let file_bytes = tokio::fs::read(local_path).await?;
 
     let mut req = client.put(&upload_url)
@@ -285,4 +311,34 @@ fn walk_dir(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
         }
     }
     Ok(files)
+}
+
+fn tasks_path(app: &AppHandle) -> PathBuf {
+    let mut p = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    p.push("app-tasks.json");
+    p
+}
+
+pub fn load_tasks(app: &AppHandle) -> Vec<BackupTask> {
+    let p = tasks_path(app);
+    if p.exists() {
+        if let Ok(content) = fs::read_to_string(p) {
+            if let Ok(tasks) = serde_json::from_str::<Vec<BackupTask>>(&content) {
+                return tasks;
+            }
+        }
+    }
+    Vec::new()
+}
+
+pub fn save_tasks(app: &AppHandle, tasks: &[BackupTask]) -> Result<(), String> {
+    let p = tasks_path(app);
+    if let Some(parent) = p.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let content = serde_json::to_string_pretty(tasks)
+        .map_err(|e| format!("序列化任务列表失败: {}", e))?;
+    fs::write(p, content)
+        .map_err(|e| format!("写入任务列表文件失败: {}", e))?;
+    Ok(())
 }

@@ -42,6 +42,7 @@ export interface BackupApi {
     start: (config: BackupTaskConfig) => Promise<BackupResult>;
     runAll: () => Promise<BackupResult>;
     listTasks: () => Promise<BackupTaskConfig[]>;
+    saveTasks: (tasks: any[]) => Promise<void>;
   };
   scheduler: {
     getJobs: () => Promise<any[]>;

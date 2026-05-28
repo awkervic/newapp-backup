@@ -31,12 +31,22 @@ function generateId(): string {
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const normalTasks = tasks.filter(t => t.id !== "__app_config_backup__");
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
   const [draggedPaths, setDraggedPaths] = useState<string[] | undefined>(undefined);
+
+  // Load tasks on startup
+  useEffect(() => {
+    window.api.backup.listTasks().then((loadedTasks) => {
+      if (loadedTasks) {
+        setTasks(loadedTasks);
+      }
+    });
+  }, []);
 
   // Listen for file drop events
   useEffect(() => {
@@ -72,32 +82,69 @@ export default function App() {
       );
 
       // Update final status
-      setTasks((prev) =>
-        prev.map((t) => {
+      setTasks((prev) => {
+        const next = prev.map((t) => {
           if (t.id !== progress.taskId) return t;
           if (progress.status === "completed") return { ...t, status: "completed" as const, progress: undefined };
           if (progress.status === "error") return { ...t, status: "error" as const, progress: undefined };
           return t;
-        })
-      );
+        });
+
+        if (progress.status === "completed") {
+          const tasksToSave = next.map(t => ({
+            id: t.id,
+            name: t.name,
+            sourcePaths: t.sourcePaths,
+            destination: t.destination,
+            options: t.options,
+            schedule: t.schedule,
+            lastBackup: t.lastBackup
+          }));
+          window.api.backup.saveTasks(tasksToSave);
+        }
+        return next;
+      });
     });
     return unsubscribe;
   }, []);
 
+  const saveTasksToBackend = useCallback((currentTasks: Task[]) => {
+    const tasksToSave = currentTasks.map(t => ({
+      id: t.id,
+      name: t.name,
+      sourcePaths: t.sourcePaths,
+      destination: t.destination,
+      options: t.options,
+      schedule: t.schedule,
+      lastBackup: t.lastBackup
+    }));
+    window.api.backup.saveTasks(tasksToSave);
+  }, []);
+
   const addTask = useCallback((task: Omit<Task, "id" | "status">) => {
     const newTask: Task = { ...task, id: generateId(), status: "idle" };
-    setTasks((prev) => [...prev, newTask]);
-  }, []);
+    setTasks((prev) => {
+      const next = [...prev, newTask];
+      saveTasksToBackend(next);
+      return next;
+    });
+  }, [saveTasksToBackend]);
 
   const updateTask = useCallback((id: string, updates: Omit<Task, "id" | "status">) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, ...updates } : t))
-    );
-  }, []);
+    setTasks((prev) => {
+      const next = prev.map((t) => (t.id === id ? { ...t, ...updates } : t));
+      saveTasksToBackend(next);
+      return next;
+    });
+  }, [saveTasksToBackend]);
 
   const deleteTask = useCallback((id: string) => {
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+    setTasks((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      saveTasksToBackend(next);
+      return next;
+    });
+  }, [saveTasksToBackend]);
 
   const startBackup = useCallback(async (id: string) => {
     const task = tasks.find((t) => t.id === id);
@@ -139,7 +186,8 @@ export default function App() {
 
   const runAllBackups = useCallback(async () => {
     setBackingUp(true);
-    for (const task of tasks) {
+    const mTasks = tasks.filter(t => t.id !== "__app_config_backup__");
+    for (const task of mTasks) {
       if (task.status !== "running") {
         await startBackup(task.id);
       }
@@ -223,7 +271,7 @@ export default function App() {
 
       {/* Main content */}
       <main className="flex-1 overflow-auto p-6">
-        {tasks.length === 0 ? (
+        {normalTasks.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="w-16 h-16 rounded-2xl bg-gray-800 flex items-center justify-center mb-4">
               <svg className="w-8 h-8 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -243,7 +291,7 @@ export default function App() {
           </div>
         ) : (
           <TaskList
-            tasks={tasks}
+            tasks={normalTasks}
             selectedTaskIds={selectedTaskIds}
             onSelectTask={handleSelectTask}
             onStart={startBackup}
@@ -255,7 +303,7 @@ export default function App() {
 
       {/* Status bar */}
       <footer className="flex items-center justify-between px-6 py-2 border-t border-gray-800 bg-gray-900/50 text-xs text-gray-500">
-        <span>{tasks.length} 个任务</span>
+        <span>{normalTasks.length} 个任务</span>
         <span>{backingUp ? "正在备份..." : "就绪"}</span>
       </footer>
 
@@ -279,7 +327,48 @@ export default function App() {
       )}
 
       {showSettings && (
-        <SettingsPanel onClose={() => setShowSettings(false)} />
+        <SettingsPanel 
+          onClose={() => setShowSettings(false)} 
+          configBackupTask={tasks.find(t => t.id === "__app_config_backup__")}
+          onSaveConfigBackup={async (taskConfig) => {
+            if (taskConfig === null) {
+              const next = tasks.filter(t => t.id !== "__app_config_backup__");
+              setTasks(next);
+              const tasksToSave = next.map(t => ({
+                id: t.id,
+                name: t.name,
+                sourcePaths: t.sourcePaths,
+                destination: t.destination,
+                options: t.options,
+                schedule: t.schedule,
+                lastBackup: t.lastBackup
+              }));
+              await window.api.backup.saveTasks(tasksToSave);
+            } else {
+              const existing = tasks.find(t => t.id === "__app_config_backup__");
+              let next: Task[];
+              if (existing) {
+                next = tasks.map(t => t.id === "__app_config_backup__" ? { ...t, ...taskConfig } : t);
+              } else {
+                next = [...tasks, { ...taskConfig, id: "__app_config_backup__", status: "idle" as const }];
+              }
+              setTasks(next);
+              const tasksToSave = next.map(t => ({
+                id: t.id,
+                name: t.name,
+                sourcePaths: t.sourcePaths,
+                destination: t.destination,
+                options: t.options,
+                schedule: t.schedule,
+                lastBackup: t.lastBackup
+              }));
+              await window.api.backup.saveTasks(tasksToSave);
+            }
+          }}
+          onStartConfigBackup={async () => {
+            await startBackup("__app_config_backup__");
+          }}
+        />
       )}
     </div>
   );

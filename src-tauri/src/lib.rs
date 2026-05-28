@@ -59,6 +59,29 @@ fn backup_list_tasks(state: tauri::State<'_, AppState>) -> Vec<BackupTask> {
 }
 
 #[tauri::command]
+async fn backup_save_tasks(tasks: Vec<BackupTask>, app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    // 1. Save to JSON file
+    backup::save_tasks(&app, &tasks)?;
+    
+    // 2. Update memory state tasks
+    {
+        let mut state_tasks = state.tasks.lock().unwrap();
+        state_tasks.clear();
+        for task in &tasks {
+            state_tasks.insert(task.id.clone(), task.clone());
+        }
+    }
+
+    // 3. Update scheduler
+    state.scheduler.cancel_all();
+    for task in &tasks {
+        state.scheduler.schedule_task(task.clone());
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn scheduler_get_jobs(state: tauri::State<'_, AppState>) -> Vec<serde_json::Value> {
     state.scheduler.get_jobs()
 }
@@ -170,9 +193,18 @@ pub fn run() {
             }
 
             // Initialize app state
+            let loaded_tasks = backup::load_tasks(app.handle());
+            let mut tasks_map = HashMap::new();
+            let scheduler = Scheduler::new();
+
+            for task in loaded_tasks {
+                scheduler.schedule_task(task.clone());
+                tasks_map.insert(task.id.clone(), task);
+            }
+
             let state = AppState {
-                tasks: Mutex::new(HashMap::new()),
-                scheduler: Scheduler::new(),
+                tasks: Mutex::new(tasks_map),
+                scheduler,
             };
 
             // Start scheduler background loop
@@ -196,6 +228,7 @@ pub fn run() {
             backup_start,
             backup_run_all,
             backup_list_tasks,
+            backup_save_tasks,
             scheduler_get_jobs,
             settings_load,
             settings_save,

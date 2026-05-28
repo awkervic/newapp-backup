@@ -6,6 +6,7 @@ const tauriApi = {
     start: (config: any) => invoke("backup_start", { config }),
     runAll: () => invoke("backup_run_all"),
     listTasks: () => invoke("backup_list_tasks"),
+    saveTasks: (tasks: any[]) => invoke("backup_save_tasks", { tasks }),
   },
   scheduler: {
     getJobs: () => invoke("scheduler_get_jobs"),
