@@ -1,6 +1,6 @@
 {
   "name": "newapp-backup",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Modern Windows backup application with WebDAV support, compression & encryption",
   "scripts": {
     "dev": "tauri dev",
