@@ -11,6 +11,9 @@
    - WebDAV 备份目的地上传时，必须自动在根路径发起 `MKCOL` 探测创建 `config-backup` 文件夹。
 3. **构建无残留卸载**：
    - Tauri 打包 NSIS 选项中必须保证清理 AppData 目录以响应干净卸载。
+4. **单实例限制**：
+   - 应用启动必须注册 `tauri-plugin-single-instance`，二次启动时通过主窗口 `main` 的 `show()`、`unminimize()` 与 `set_focus()` 唤醒旧实例，防止任务栏多进程多窗口。
+
 
 ## 🛠️ 重大变更与 API 速查矩阵 (Change Matrix)
 * **IPC 桥接层速查 (`src/tauri-bridge.ts`, `src/global.d.ts`)**:
