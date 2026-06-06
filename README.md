@@ -6,7 +6,7 @@
 [![Tailwind](https://img.shields.io/badge/Styling-Tailwind%20v4-teal?style=for-the-badge&logo=tailwindcss)](https://tailwindcss.com/)
 [![Built with AI](https://img.shields.io/badge/Built%20with-Antigravity%20AI-blueviolet?style=for-the-badge)](https://deepmind.google/)
 
-一个极致轻量、现代、安全的 Windows 备份专家。支持 **WebDAV 云同步**、**7z/ZIP 高压缩** 与 **AES-256 军事级加密**。
+一个极致轻量、现代、安全的 Windows 备份专家。支持 **WebDAV 云端同步**、**7z/ZIP 高比例压缩** 与 **AES-256 军事级加密**。
 
 > 💡 **重构奇迹：** 本项目最初基于 **Electron** 架构开发，打包体积高达 **97MB**，解压占用近 **300MB** 磁盘。
 > 在 **Google DeepMind Antigravity AI** 的硬核重构下，项目全面迁往 **Tauri v2 + Rust** 架构，最终将安装包极限压缩至 **3.0MB**，内存占用降低 **80%**！
@@ -17,10 +17,28 @@
 
 - 📦 **双格式压缩支持：** 提供行业标准 `ZIP` 与极致压缩比的 `7z` 备份格式。
 - 🔑 **军事级安全加密：** 支持 `AES-256` 算法，可一键为您的备份文件加锁，支持对 7z 文件名进行彻底混淆加密。
-- ☁️ **WebDAV 云存储：** 自动将本地压缩备份文件流式上传至坚果云、群晖 NAS 等任意 WebDAV 云盘，上传完成后自动清理临时文件，零残留。
 - ⏰ **智能定时任务：** 基于 Rust 异步高精度时钟，支持每小时、每天、每周及自定义 Cron 表达式自动备份。
 - 🎨 **极简现代视觉：** 搭载 Tailwind CSS v4 打造的暗黑科技风 UI，支持平滑流畅的微动效，赏心悦目。
 - 📥 **系统托盘运行：** 支持最小化至 Windows 系统托盘静默运行，双击还原，右键一键备份所有任务。
+
+### 🚀 最新升级（v0.1.3+ 新增高级监控与策略）
+- ☁️ **WebDAV 流式上传与重试监控：**
+  - **进度条分阶段监测**：压缩阶段精准占比 50%（非 WebDAV 任务自适应为 100%），上传阶段精准占比 50%（50%~100%）。
+  - **上传速率实时显示**：实时计算并渲染瞬时上传速度（例如 `2.34 MB/s`、`520 KB/s`）。
+  - **超大备份超时保护**：内置 1 小时大文件传输保护与 30 秒连接超时，保障 1G 以上大体积备份在网络波动中不会被异常掐断。
+  - **异常自动重试与提示**：上传网络中断时，每 5 秒自动重试一次，最大重试 3 次，且在界面中同步输出提示文字（如 `上传出错，5秒后进行第 X/3 次重试...`）。
+  - **零残留文件清理**：无论上传成功还是最终重试失败，都会在任务退出前物理销毁本地临时压缩文件，防止磁盘空间泄漏。
+- 🧹 **本地历史备份自动清理策略 (Local Retention Policy)：**
+  - 支持在新建/编辑备份任务时开启“自动清理历史备份”开关，可选择自定义保留天数。
+  - 开启时仅保留在期备份，关闭时默认永久保存。
+  - 备份成功后，后端自动解析文件夹下历史压缩包文件名中的日期戳，智能移除过期的旧文件。
+- 📂 **配置文件一键恢复备份 (Config Restore Panel)：**
+  - 独立控制面板集成在“设置 - 应用配置备份”模块中。
+  - **本地恢复**：可选择本地的 `.zip`/`.7z` 配置备份包，一键还原 `app-settings.json` 及 `app-tasks.json` 并自动重载刷新应用。
+  - **云端 WebDAV 恢复**：自动发起 `PROPFIND` 命令拉取云端历史配置备份目录，支持在下拉框中直接选择指定的云端备份包进行一键下载、提取与还原。
+- 🤫 **托盘静默开机自启 (Silent Autostart)：**
+  - 与 Windows 注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 启动项原生绑定。
+  - 采用 `--minimized` 命令行参数。开机自动运行后会静默启动在系统托盘后台，不弹出任何窗口打扰用户，打造真正的金牌托盘工具体验。
 
 ---
 
@@ -43,19 +61,24 @@
 ### 1. 安装 Rust 环境
 1. 访问并下载 Rust 官方管理工具：**[rustup.rs](https://rustup.rs/)**
 2. 运行 `rustup-init.exe`，选择 `1` (默认安装) 回车。
-3. 确保勾选/安装了 **Windows 10 / 11 SDK** 组件（可通过 *Visual Studio Installer* 快速补充勾选）。
+3. 确保安装了 **Windows 10 / 11 SDK** 组件（可通过 *Visual Studio Installer* 快速补充勾选）。
 
-### 2. 启动开发调试
+### 2. 安装前端依赖
+```bash
+npm install
+```
+
+### 3. 启动开发调试
 ```bash
 npm run dev
 ```
 
-### 3. 一键编译 Sub-10MB 安装包！
+### 4. 一键编译 Sub-10MB 安装包！
 ```bash
 npm run build
 ```
-编译生成的超轻量级 Windows 安装包 (`.msi`) 和 standalone 可执行文件将生成在：
-`src-tauri/target/release/bundle/msi/` 目录下。
+编译生成的超轻量级 Windows 安装包 (`.msi`、`.exe`) 和可执行文件将生成在：
+`src-tauri/target/release/bundle/` 目录下。
 
 ---
 
