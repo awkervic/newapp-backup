@@ -7,6 +7,7 @@ const tauriApi = {
     runAll: () => invoke("backup_run_all"),
     listTasks: () => invoke("backup_list_tasks"),
     saveTasks: (tasks: any[]) => invoke("backup_save_tasks", { tasks }),
+    getTaskStats: (paths: string[]) => invoke("get_task_stats", { paths }),
   },
   config: {
     restoreLocal: (archivePath: string) => invoke("config_restore_local", { archivePath }),

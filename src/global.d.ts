@@ -43,6 +43,7 @@ export interface BackupApi {
     runAll: () => Promise<BackupResult>;
     listTasks: () => Promise<BackupTaskConfig[]>;
     saveTasks: (tasks: any[]) => Promise<void>;
+    getTaskStats: (paths: string[]) => Promise<{ total_size: number; file_count: number }>;
   };
   config: {
     restoreLocal: (archivePath: string) => Promise<{ success: boolean; restoredSettings: boolean; restoredTasks: boolean }>;

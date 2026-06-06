@@ -123,6 +123,46 @@ fn app_minimize_to_tray(app: AppHandle) {
     }
 }
 
+#[derive(serde::Serialize)]
+struct TaskStats {
+    total_size: u64,
+    file_count: u64,
+}
+
+#[tauri::command]
+fn get_task_stats(paths: Vec<String>) -> Result<TaskStats, String> {
+    let mut total_size = 0;
+    let mut file_count = 0;
+
+    fn calculate_stats(path: &std::path::Path, total_size: &mut u64, file_count: &mut u64) -> std::io::Result<()> {
+        if path.is_file() {
+            if let Ok(metadata) = path.metadata() {
+                *total_size += metadata.len();
+                *file_count += 1;
+            }
+        } else if path.is_dir() {
+            for entry in std::fs::read_dir(path)? {
+                let entry = entry?;
+                let path = entry.path();
+                calculate_stats(&path, total_size, file_count)?;
+            }
+        }
+        Ok(())
+    }
+
+    for path_str in paths {
+        let path = std::path::Path::new(&path_str);
+        if path.exists() {
+            let _ = calculate_stats(path, &mut total_size, &mut file_count);
+        }
+    }
+
+    Ok(TaskStats {
+        total_size,
+        file_count,
+    })
+}
+
 fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle();
     
@@ -250,6 +290,7 @@ pub fn run() {
             dialog_open_directory,
             dialog_open_file,
             app_minimize_to_tray,
+            get_task_stats,
             config_restore_local,
             config_list_webdav_backups,
             config_restore_webdav
