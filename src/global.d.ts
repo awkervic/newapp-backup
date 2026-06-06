@@ -44,6 +44,11 @@ export interface BackupApi {
     listTasks: () => Promise<BackupTaskConfig[]>;
     saveTasks: (tasks: any[]) => Promise<void>;
   };
+  config: {
+    restoreLocal: (archivePath: string) => Promise<{ success: boolean; restoredSettings: boolean; restoredTasks: boolean }>;
+    listWebdavBackups: (destination: any) => Promise<string[]>;
+    restoreWebdav: (destination: any, remoteFileName: string) => Promise<{ success: boolean; restoredSettings: boolean; restoredTasks: boolean }>;
+  };
   scheduler: {
     getJobs: () => Promise<any[]>;
   };

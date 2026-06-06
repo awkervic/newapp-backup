@@ -5,10 +5,16 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tauri::{AppHandle, Emitter, Manager};
-use chrono::Local;
+use chrono::{Local, TimeZone};
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
+// Added for streaming upload and progress tracking
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use futures_util::Stream;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio_util::io::ReaderStream;
+
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +43,7 @@ pub struct BackupTask {
     pub destination: Destination,
     pub options: BackupOptions,
     pub schedule: Option<String>,
+    pub retention_days: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -162,7 +169,7 @@ pub async fn execute_backup(app: AppHandle, task: BackupTask) -> Result<(), Stri
     let mut cmd = Command::new(sidecar_path);
     cmd.args(args);
     cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
+    cmd.stderr(Stdio::null()); // Discard stderr to prevent blocking/hanging due to pipe buffer limits!
 
     // Create a hidden window process on Windows to avoid flashing cmd windows
     #[cfg(target_os = "windows")]
@@ -183,6 +190,7 @@ pub async fn execute_backup(app: AppHandle, task: BackupTask) -> Result<(), Stri
     let stdout = child.stdout.take().unwrap();
     let mut reader = BufReader::new(stdout).lines();
     let mut processed_count = 0;
+    let compress_max = if is_local { 100u32 } else { 50u32 };
 
     // Read stdout for progress updates
     while let Ok(Some(line)) = reader.next_line().await {
@@ -196,9 +204,9 @@ pub async fn execute_backup(app: AppHandle, task: BackupTask) -> Result<(), Stri
             };
 
             let percent = if total_files > 0 {
-                std::cmp::min((processed_count * 80) / total_files, 80) as u32
+                std::cmp::min((processed_count as u32 * compress_max) / total_files as u32, compress_max)
             } else {
-                40
+                compress_max / 2
             };
             emit_progress(percent, &format!("正在压缩: {}", current_file), "running", None);
         }
@@ -213,18 +221,24 @@ pub async fn execute_backup(app: AppHandle, task: BackupTask) -> Result<(), Stri
         }
     };
 
-    if !status.success() {
-        let err_msg = format!("7zip 执行失败，退出码: {:?}", status.code());
+    let exit_code = status.code().unwrap_or(-1);
+    if exit_code != 0 && exit_code != 1 {
+        let err_msg = format!("7zip 执行失败，退出码: {}", exit_code);
         emit_progress(0, "备份失败", "error", Some(err_msg.clone()));
         return Err(err_msg);
     }
 
-    emit_progress(90, "压缩完成，正在传输...", "running", None);
+    if is_local {
+        emit_progress(100, "备份完成", "completed", None);
+        return Ok(());
+    }
+
+    emit_progress(50, "压缩完成，开始上传...", "running", None);
 
     // 2. Upload to WebDAV if destination is WebDAV
     if task.destination.r#type == "webdav" {
         let is_config_backup = task.id == "__app_config_backup__";
-        if let Err(e) = upload_to_webdav(&archive_path, &backup_file_name, &task.destination, is_config_backup).await {
+        if let Err(e) = upload_to_webdav(app.clone(), task_id.clone(), &archive_path, &backup_file_name, &task.destination, is_config_backup).await {
             let err_msg = format!("上传至 WebDAV 失败: {}", e);
             emit_progress(0, "备份失败", "error", Some(err_msg.clone()));
             return Err(err_msg);
@@ -232,10 +246,55 @@ pub async fn execute_backup(app: AppHandle, task: BackupTask) -> Result<(), Stri
     }
 
     emit_progress(100, "备份完成", "completed", None);
+
+    // Retention policy cleanup for local backups
+    if is_local {
+        if let Some(days) = task.retention_days {
+            if days > 0 {
+                let _ = cleanup_old_backups(&archive_dir, &clean_name, &task.options.format, days);
+            }
+        }
+    }
     Ok(())
 }
 
+struct ProgressStream<S> {
+    inner: S,
+    uploaded: Arc<AtomicU64>,
+}
+
+impl<S, O, E> Stream for ProgressStream<S>
+where
+    S: Stream<Item = Result<O, E>> + Unpin,
+    O: AsRef<[u8]>,
+{
+    type Item = Result<O, E>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<O, E>>> {
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(chunk))) => {
+                let len = chunk.as_ref().len() as u64;
+                self.uploaded.fetch_add(len, Ordering::Relaxed);
+                Poll::Ready(Some(Ok(chunk)))
+            }
+            other => other,
+        }
+    }
+}
+
+fn format_speed(bytes_per_sec: f64) -> String {
+    if bytes_per_sec >= 1024.0 * 1024.0 {
+        format!("{:.2} MB/s", bytes_per_sec / (1024.0 * 1024.0))
+    } else if bytes_per_sec >= 1024.0 {
+        format!("{:.2} KB/s", bytes_per_sec / 1024.0)
+    } else {
+        format!("{:.0} B/s", bytes_per_sec)
+    }
+}
+
 async fn upload_to_webdav(
+    app: AppHandle,
+    task_id: String,
     local_path: &Path,
     remote_file_name: &str,
     destination: &Destination,
@@ -245,7 +304,12 @@ async fn upload_to_webdav(
     let user = destination.webdav_user.as_deref().unwrap_or("");
     let password = destination.webdav_password.as_deref().unwrap_or("");
 
-    let client = reqwest::Client::new();
+    // Use a custom builder with large/no timeout to prevent timeout issues on large uploads
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3600)) // 1 hour timeout
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
     let mut base_url = webdav_url.trim_end_matches('/').to_string();
 
     if is_config_backup {
@@ -263,23 +327,131 @@ async fn upload_to_webdav(
     upload_url.push('/');
     upload_url.push_str(remote_file_name);
 
-    let file_bytes = tokio::fs::read(local_path).await?;
+    let uploaded = Arc::new(AtomicU64::new(0));
+    let upload_finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    let mut req = client.put(&upload_url)
-        .body(file_bytes);
+    // Spawn progress reporter
+    let uploaded_clone = uploaded.clone();
+    let upload_finished_clone = upload_finished.clone();
+    let app_clone = app.clone();
+    let task_id_clone = task_id.clone();
+    let remote_file_name_str = remote_file_name.to_string();
 
-    if !user.is_empty() {
-        req = req.basic_auth(user, Some(password));
+    let metadata = tokio::fs::metadata(local_path).await?;
+    let total_size = metadata.len();
+
+    let reporter_handle = tauri::async_runtime::spawn(async move {
+        let start_time = std::time::Instant::now();
+        let mut last_emit_time = start_time;
+        let mut last_bytes = 0u64;
+
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            if upload_finished_clone.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let now = std::time::Instant::now();
+            let bytes = uploaded_clone.load(Ordering::Relaxed);
+
+            if total_size > 0 && bytes > 0 {
+                let elapsed_secs = now.duration_since(last_emit_time).as_secs_f64();
+                let speed = if elapsed_secs > 0.0 {
+                    let diff = if bytes >= last_bytes { bytes - last_bytes } else { 0 };
+                    diff as f64 / elapsed_secs
+                } else {
+                    0.0
+                };
+
+                last_emit_time = now;
+                last_bytes = bytes;
+
+                // Overall progress goes from 50% to 99% during upload
+                let upload_percent = std::cmp::min((bytes * 49) / total_size, 49) as u32;
+                let overall_percent = 50 + upload_percent;
+
+                let speed_str = format_speed(speed);
+                let progress = BackupProgress {
+                    task_id: task_id_clone.clone(),
+                    percent: overall_percent,
+                    current_file: format!("正在上传: {} ({})", remote_file_name_str, speed_str),
+                    status: "running".to_string(),
+                    error: None,
+                };
+                let _ = app_clone.emit("backup:progress", progress);
+            }
+        }
+    });
+
+    let mut attempts = 0;
+    let max_attempts = 3;
+    let mut last_error: Option<Box<dyn std::error::Error + Send + Sync>> = None;
+
+    while attempts < max_attempts {
+        attempts += 1;
+        if attempts > 1 {
+            let msg = format!("上传出错，5秒后进行第 {}/{} 次重试...", attempts, max_attempts);
+            let _ = app.emit("backup:progress", BackupProgress {
+                task_id: task_id.clone(),
+                percent: 50,
+                current_file: msg,
+                status: "running".to_string(),
+                error: None,
+            });
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
+
+        // Reset uploaded bytes count
+        uploaded.store(0, Ordering::Relaxed);
+
+        let file = match tokio::fs::File::open(local_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                last_error = Some(Box::new(e));
+                continue;
+            }
+        };
+        let reader_stream = ReaderStream::new(file);
+
+        let progress_stream = ProgressStream {
+            inner: reader_stream,
+            uploaded: uploaded.clone(),
+        };
+
+        let body = reqwest::Body::wrap_stream(progress_stream);
+        let mut req = client.put(&upload_url).body(body);
+
+        if !user.is_empty() {
+            req = req.basic_auth(user, Some(password));
+        }
+
+        match req.send().await {
+            Ok(res) => {
+                if res.status().is_success() {
+                    // Success! Stop the reporter and delete file
+                    upload_finished.store(true, Ordering::Relaxed);
+                    let _ = reporter_handle.await;
+                    let _ = fs::remove_file(local_path);
+                    return Ok(());
+                } else {
+                    last_error = Some(format!("WebDAV upload failed with status code: {}", res.status()).into());
+                }
+            }
+            Err(e) => {
+                last_error = Some(Box::new(e));
+            }
+        }
     }
 
-    let res = req.send().await?;
-    if res.status().is_success() {
-        // Delete local temporary file
-        let _ = fs::remove_file(local_path);
-        Ok(())
-    } else {
-        Err(format!("WebDAV upload failed with status code: {}", res.status()).into())
-    }
+    // Stop the progress reporter
+    upload_finished.store(true, Ordering::Relaxed);
+    let _ = reporter_handle.await;
+
+    // Always delete local temporary file on final failure
+    let _ = fs::remove_file(local_path);
+
+    Err(last_error.unwrap_or_else(|| "Unknown upload error".into()))
 }
 
 fn collect_files(source_paths: &[String]) -> Vec<PathBuf> {
@@ -341,4 +513,267 @@ pub fn save_tasks(app: &AppHandle, tasks: &[BackupTask]) -> Result<(), String> {
     fs::write(p, content)
         .map_err(|e| format!("写入任务列表文件失败: {}", e))?;
     Ok(())
+}
+
+fn cleanup_old_backups(dir: &Path, prefix: &str, format: &str, retention_days: u32) -> std::io::Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    
+    let now = chrono::Local::now();
+    let retention_duration = chrono::Duration::days(retention_days as i64);
+    let cutoff_time = now - retention_duration;
+    
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.is_file() {
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                if filename.starts_with(prefix) && filename.ends_with(format) {
+                    let without_prefix = &filename[prefix.len()..];
+                    if without_prefix.starts_with('_') {
+                        let without_prefix_under = &without_prefix[1..];
+                        let name_len = without_prefix_under.len();
+                        let format_len = format.len() + 1; // including the dot
+                        if name_len > format_len {
+                            let date_part = &without_prefix_under[..name_len - format_len];
+                            if let Ok(file_time) = chrono::NaiveDateTime::parse_from_str(date_part, "%Y-%m-%d_%H-%M-%S") {
+                                let local_file_time = chrono::Local.from_local_datetime(&file_time).single();
+                                if let Some(local_time) = local_file_time {
+                                    if local_time < cutoff_time {
+                                        let _ = fs::remove_file(path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn find_file_recursive(dir: &Path, target_name: &str) -> Option<PathBuf> {
+    if !dir.is_dir() {
+        return None;
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(found) = find_file_recursive(&path, target_name) {
+                        return Some(found);
+                    }
+                } else if path.is_file() {
+                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                        if filename == target_name {
+                            return Some(path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_hrefs(xml: &str) -> Vec<String> {
+    let mut hrefs = Vec::new();
+    let mut temp = xml;
+    while let Some(start_idx) = temp.find("<d:href>") {
+        let end_tag = "</d:href>";
+        if let Some(end_idx) = temp[start_idx..].find(end_tag) {
+            let href = &temp[start_idx + 8..start_idx + end_idx];
+            hrefs.push(href.to_string());
+            temp = &temp[start_idx + end_idx + end_tag.len()..];
+        } else {
+            break;
+        }
+    }
+    if hrefs.is_empty() {
+        let mut temp = xml;
+        while let Some(start_idx) = temp.find("<D:href>") {
+            let end_tag = "</D:href>";
+            if let Some(end_idx) = temp[start_idx..].find(end_tag) {
+                let href = &temp[start_idx + 8..start_idx + end_idx];
+                hrefs.push(href.to_string());
+                temp = &temp[start_idx + end_idx + end_tag.len()..];
+            } else {
+                break;
+            }
+        }
+    }
+    if hrefs.is_empty() {
+        let mut temp = xml;
+        while let Some(start_idx) = temp.find("<href>") {
+            let end_tag = "</href>";
+            if let Some(end_idx) = temp[start_idx..].find(end_tag) {
+                let href = &temp[start_idx + 6..start_idx + end_idx];
+                hrefs.push(href.to_string());
+                temp = &temp[start_idx + end_idx + end_tag.len()..];
+            } else {
+                break;
+            }
+        }
+    }
+    hrefs
+}
+
+#[tauri::command]
+pub async fn config_restore_local(app: AppHandle, archive_path: String) -> Result<serde_json::Value, String> {
+    let app_data = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    
+    let sidecar_path = match app.path().resolve("resources/7za.exe", tauri::path::BaseDirectory::Resource) {
+        Ok(p) => p,
+        Err(e) => return Err(format!("无法定位压缩工具 (7za.exe): {}", e)),
+    };
+    
+    let temp_dir = app_temp_dir().join(format!("restore_{}", Local::now().format("%Y%m%d%H%M%S")));
+    if !temp_dir.exists() {
+        let _ = fs::create_dir_all(&temp_dir);
+    }
+    
+    let mut cmd = Command::new(sidecar_path);
+    cmd.args(&[
+        "x",
+        &archive_path,
+        &format!("-o{}", temp_dir.to_string_lossy()),
+        "-y",
+    ]);
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    
+    let mut child = cmd.spawn().map_err(|e| format!("启动 7zip 失败: {}", e))?;
+    let status = child.wait().await.map_err(|e| format!("等待 7zip 结束失败: {}", e))?;
+    
+    let exit_code = status.code().unwrap_or(-1);
+    if exit_code != 0 && exit_code != 1 {
+        let _ = fs::remove_dir_all(&temp_dir);
+        return Err(format!("解压备份文件失败，退出码: {}", exit_code));
+    }
+    
+    let settings_src = find_file_recursive(&temp_dir, "app-settings.json");
+    let tasks_src = find_file_recursive(&temp_dir, "app-tasks.json");
+    
+    let mut restored_settings = false;
+    let mut restored_tasks = false;
+    
+    if let Some(src) = settings_src {
+        if let Err(e) = fs::copy(&src, app_data.join("app-settings.json")) {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(format!("恢复 app-settings.json 失败: {}", e));
+        }
+        restored_settings = true;
+    }
+    
+    if let Some(src) = tasks_src {
+        if let Err(e) = fs::copy(&src, app_data.join("app-tasks.json")) {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(format!("恢复 app-tasks.json 失败: {}", e));
+        }
+        restored_tasks = true;
+    }
+    
+    let _ = fs::remove_dir_all(&temp_dir);
+    
+    if !restored_settings && !restored_tasks {
+        return Err("备份文件中未找到配置文件 (app-settings.json 或 app-tasks.json)".to_string());
+    }
+    
+    Ok(serde_json::json!({
+        "success": true,
+        "restoredSettings": restored_settings,
+        "restoredTasks": restored_tasks,
+    }))
+}
+
+#[tauri::command]
+pub async fn config_list_webdav_backups(destination: Destination) -> Result<Vec<String>, String> {
+    let webdav_url = destination.webdav_url.as_ref().ok_or("Missing WebDAV URL")?;
+    let user = destination.webdav_user.as_deref().unwrap_or("");
+    let password = destination.webdav_password.as_deref().unwrap_or("");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let base_url = webdav_url.trim_end_matches('/').to_string();
+    let folder_url = format!("{}/config-backup", base_url);
+
+    let mut req = client.request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &folder_url)
+        .header("Depth", "1");
+
+    if !user.is_empty() {
+        req = req.basic_auth(user, Some(password));
+    }
+
+    let res = req.send().await.map_err(|e| format!("无法连接至 WebDAV: {}", e))?;
+    if !res.status().is_success() {
+        return Ok(Vec::new());
+    }
+
+    let body = res.text().await.map_err(|e| format!("读取 WebDAV 响应失败: {}", e))?;
+
+    let hrefs = extract_hrefs(&body);
+    let mut backups = Vec::new();
+    for href in hrefs {
+        if let Ok(decoded) = percent_encoding::percent_decode_str(&href).decode_utf8() {
+            let decoded_str = decoded.to_string();
+            if let Some(filename) = Path::new(&decoded_str).file_name().and_then(|n| n.to_str()) {
+                if filename.ends_with(".zip") || filename.ends_with(".7z") {
+                    backups.push(filename.to_string());
+                }
+            }
+        }
+    }
+    
+    backups.sort_by(|a, b| b.cmp(a));
+    Ok(backups)
+}
+
+#[tauri::command]
+pub async fn config_restore_webdav(app: AppHandle, destination: Destination, remote_file_name: String) -> Result<serde_json::Value, String> {
+    let webdav_url = destination.webdav_url.as_ref().ok_or("Missing WebDAV URL")?;
+    let user = destination.webdav_user.as_deref().unwrap_or("");
+    let password = destination.webdav_password.as_deref().unwrap_or("");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let base_url = webdav_url.trim_end_matches('/').to_string();
+    let file_url = format!("{}/config-backup/{}", base_url, remote_file_name);
+
+    let mut req = client.get(&file_url);
+    if !user.is_empty() {
+        req = req.basic_auth(user, Some(password));
+    }
+
+    let res = req.send().await.map_err(|e| format!("下载 WebDAV 备份文件失败: {}", e))?;
+    if !res.status().is_success() {
+        return Err(format!("下载 WebDAV 备份文件失败，状态码: {}", res.status()));
+    }
+
+    let bytes = res.bytes().await.map_err(|e| format!("读取备份文件数据失败: {}", e))?;
+    
+    let temp_file_path = app_temp_dir().join(format!("temp_restore_{}", remote_file_name));
+    fs::write(&temp_file_path, bytes).map_err(|e| format!("保存备份文件至本地失败: {}", e))?;
+
+    let restore_result = config_restore_local(app, temp_file_path.to_string_lossy().to_string()).await;
+    let _ = fs::remove_file(&temp_file_path);
+
+    restore_result
 }

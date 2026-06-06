@@ -8,6 +8,11 @@ const tauriApi = {
     listTasks: () => invoke("backup_list_tasks"),
     saveTasks: (tasks: any[]) => invoke("backup_save_tasks", { tasks }),
   },
+  config: {
+    restoreLocal: (archivePath: string) => invoke("config_restore_local", { archivePath }),
+    listWebdavBackups: (destination: any) => invoke("config_list_webdav_backups", { destination }),
+    restoreWebdav: (destination: any, remoteFileName: string) => invoke("config_restore_webdav", { destination, remoteFileName }),
+  },
   scheduler: {
     getJobs: () => invoke("scheduler_get_jobs"),
   },

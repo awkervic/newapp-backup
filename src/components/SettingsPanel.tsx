@@ -42,6 +42,14 @@ export function SettingsPanel({
   const [backupHour, setBackupHour] = useState<number>(3);
   const [backupDayOfWeek, setBackupDayOfWeek] = useState<number>(1);
 
+  // Config restore states
+  const [showRestoreSection, setShowRestoreSection] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreMessage, setRestoreMessage] = useState("");
+  const [webdavBackups, setWebdavBackups] = useState<string[]>([]);
+  const [selectedWebdavBackup, setSelectedWebdavBackup] = useState("");
+  const [loadingWebdavBackups, setLoadingWebdavBackups] = useState(false);
+
   // New preset form
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
@@ -163,6 +171,93 @@ export function SettingsPanel({
       handleSaveConfigBackup(configEnabled, destType, selectedWebdavId, path, backupFrequency, backupHour, backupDayOfWeek);
     }
   }
+
+  const handleRestoreLocal = async () => {
+    try {
+      const paths = await window.api.dialog.openFile();
+      if (!paths || paths.length === 0) return;
+      
+      setIsRestoring(true);
+      setRestoreMessage("正在读取并恢复本地配置...");
+      
+      const result = await window.api.config.restoreLocal(paths[0]);
+      if (result.success) {
+        setRestoreMessage("🎉 配置恢复成功！应用即将自动重启...");
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } else {
+        setRestoreMessage("❌ 恢复失败：备份文件不符或损坏");
+      }
+    } catch (err: any) {
+      setRestoreMessage(`❌ 恢复出错: ${err}`);
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  const handleFetchWebdavBackups = async () => {
+    try {
+      setLoadingWebdavBackups(true);
+      setRestoreMessage("");
+      const selectedPreset = webdavPresets.find(p => p.id === selectedWebdavId);
+      if (!selectedPreset) {
+        setRestoreMessage("❌ 错误：请先选择一个有效的 WebDAV 预设！");
+        return;
+      }
+      const destination = {
+        type: "webdav",
+        path: "/",
+        webdavUrl: selectedPreset.url,
+        webdavUser: selectedPreset.username,
+        webdavPassword: selectedPreset.password,
+      };
+      const backups = await window.api.config.listWebdavBackups(destination);
+      setWebdavBackups(backups);
+      if (backups.length > 0) {
+        setSelectedWebdavBackup(backups[0]);
+      } else {
+        setRestoreMessage("⚠️ 未在 WebDAV 备份目录中发现备份文件");
+      }
+    } catch (err: any) {
+      setRestoreMessage(`❌ 获取列表失败: ${err}`);
+    } finally {
+      setLoadingWebdavBackups(false);
+    }
+  };
+
+  const handleRestoreWebdav = async () => {
+    if (!selectedWebdavBackup) return;
+    try {
+      setIsRestoring(true);
+      setRestoreMessage("正在从 WebDAV 下载并恢复配置...");
+      const selectedPreset = webdavPresets.find(p => p.id === selectedWebdavId);
+      if (!selectedPreset) {
+        setRestoreMessage("❌ 错误：请先选择一个有效的 WebDAV 预设！");
+        return;
+      }
+      const destination = {
+        type: "webdav",
+        path: "/",
+        webdavUrl: selectedPreset.url,
+        webdavUser: selectedPreset.username,
+        webdavPassword: selectedPreset.password,
+      };
+      const result = await window.api.config.restoreWebdav(destination, selectedWebdavBackup);
+      if (result.success) {
+        setRestoreMessage("🎉 配置恢复成功！应用即将自动重启...");
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } else {
+        setRestoreMessage("❌ 恢复失败：备份文件损坏或格式不符");
+      }
+    } catch (err: any) {
+      setRestoreMessage(`❌ 恢复出错: ${err}`);
+    } finally {
+      setIsRestoring(false);
+    }
+  };
 
   function save(next: {
     minimizeToTray?: boolean;
@@ -485,15 +580,100 @@ export function SettingsPanel({
                         )}
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={onStartConfigBackup}
-                        disabled={configBackupTask?.status === "running"}
-                        className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg disabled:opacity-40 transition-colors flex items-center gap-1 shrink-0 cursor-pointer"
-                      >
-                        {configBackupTask?.status === "running" ? "正在备份" : "立即备份"}
-                      </button>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => { setShowRestoreSection(!showRestoreSection); setRestoreMessage(""); }}
+                          disabled={configBackupTask?.status === "running" || isRestoring}
+                          className="px-3 py-1.5 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg disabled:opacity-40 transition-colors cursor-pointer"
+                        >
+                          恢复配置
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onStartConfigBackup}
+                          disabled={configBackupTask?.status === "running" || isRestoring}
+                          className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg disabled:opacity-40 transition-colors flex items-center gap-1 cursor-pointer"
+                        >
+                          {configBackupTask?.status === "running" ? "正在备份" : "立即备份"}
+                        </button>
+                      </div>
                     </div>
+
+                    {showRestoreSection && (
+                      <div className="mt-3 p-3 rounded-lg bg-gray-950 border border-gray-800 space-y-3">
+                        <h4 className="text-xs font-semibold text-gray-300">恢复配置备份</h4>
+                        
+                        <div className="flex flex-col gap-2">
+                          <button
+                            type="button"
+                            onClick={handleRestoreLocal}
+                            disabled={isRestoring}
+                            className="w-full px-3 py-2 text-xs bg-gray-900 hover:bg-gray-800 text-gray-200 border border-gray-750 rounded-lg transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            📁 选择本地备份文件并恢复...
+                          </button>
+
+                          {destType === "webdav" && (
+                            <div className="space-y-2 mt-1 border-t border-gray-850 pt-2">
+                              <button
+                                type="button"
+                                onClick={handleFetchWebdavBackups}
+                                disabled={isRestoring || loadingWebdavBackups}
+                                className="w-full px-2.5 py-1.5 text-xs bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1"
+                              >
+                                {loadingWebdavBackups ? "正在获取在线列表..." : "☁️ 获取 WebDAV 在线备份列表"}
+                              </button>
+
+                              {webdavBackups.length > 0 && (
+                                <div className="flex gap-2 items-center">
+                                  <select
+                                    value={selectedWebdavBackup}
+                                    onChange={(e) => setSelectedWebdavBackup(e.target.value)}
+                                    className="flex-1 px-2.5 py-2 text-xs rounded-lg bg-gray-900 border border-gray-700 text-gray-150 focus:outline-none focus:border-blue-500"
+                                  >
+                                    <option value="">-- 选择云端备份文件 --</option>
+                                    {webdavBackups.map((filename) => (
+                                      <option key={filename} value={filename}>
+                                        {filename}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    onClick={handleRestoreWebdav}
+                                    disabled={isRestoring || !selectedWebdavBackup}
+                                    className="px-3.5 py-2 text-xs bg-green-600 hover:bg-green-500 text-white rounded-lg disabled:opacity-40 transition-colors cursor-pointer shrink-0"
+                                  >
+                                    开始恢复
+                                  </button>
+                                </div>
+                              )}
+                              
+                              {webdavBackups.length === 0 && !loadingWebdavBackups && (
+                                <p className="text-[10px] text-gray-500 text-center italic">暂无云端备份</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {restoreMessage && (
+                          <div className={`text-[11px] text-center font-medium mt-1 ${restoreMessage.includes("成功") ? "text-green-400" : "text-red-400"}`}>
+                            {restoreMessage}
+                          </div>
+                        )}
+                        
+                        <div className="flex justify-end pt-1">
+                          <button
+                            type="button"
+                            onClick={() => { setShowRestoreSection(false); setRestoreMessage(""); }}
+                            className="text-[10px] text-gray-500 hover:text-gray-400 cursor-pointer"
+                          >
+                            收起面板
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>

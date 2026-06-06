@@ -20,6 +20,7 @@ export interface Task {
     password?: string;
   };
   schedule?: string;
+  retentionDays?: number;
   lastBackup?: string;
   status?: "idle" | "running" | "completed" | "error";
   progress?: { percent: number; currentFile: string };
@@ -98,6 +99,7 @@ export default function App() {
             destination: t.destination,
             options: t.options,
             schedule: t.schedule,
+            retentionDays: t.retentionDays,
             lastBackup: t.lastBackup
           }));
           window.api.backup.saveTasks(tasksToSave);
@@ -116,6 +118,7 @@ export default function App() {
       destination: t.destination,
       options: t.options,
       schedule: t.schedule,
+      retentionDays: t.retentionDays,
       lastBackup: t.lastBackup
     }));
     window.api.backup.saveTasks(tasksToSave);
@@ -341,6 +344,7 @@ export default function App() {
                 destination: t.destination,
                 options: t.options,
                 schedule: t.schedule,
+                retentionDays: t.retentionDays,
                 lastBackup: t.lastBackup
               }));
               await window.api.backup.saveTasks(tasksToSave);
@@ -360,6 +364,7 @@ export default function App() {
                 destination: t.destination,
                 options: t.options,
                 schedule: t.schedule,
+                retentionDays: t.retentionDays,
                 lastBackup: t.lastBackup
               }));
               await window.api.backup.saveTasks(tasksToSave);

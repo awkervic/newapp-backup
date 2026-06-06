@@ -73,6 +73,10 @@ export function CreateTaskModal({ task, initialSourcePaths, onClose, onSave }: P
   const [scheduleMinute, setScheduleMinute] = useState(0);
   const [scheduleDay, setScheduleDay] = useState(1);
   const [scheduleCron, setScheduleCron] = useState(existingCron ?? "0 9 * * *");
+  
+  // Retention policy state
+  const [retentionEnabled, setRetentionEnabled] = useState(!!task?.retentionDays);
+  const [retentionDays, setRetentionDays] = useState(task?.retentionDays ?? 30);
 
   // Parse existing cron into preset when editing
   useEffect(() => {
@@ -140,6 +144,7 @@ export function CreateTaskModal({ task, initialSourcePaths, onClose, onSave }: P
           : { type: "local", path: destPath },
       options: { format, compressionLevel, password: password || undefined },
       schedule: computedCron,
+      retentionDays: retentionEnabled ? retentionDays : undefined,
     });
     onClose();
   };
@@ -356,6 +361,37 @@ export function CreateTaskModal({ task, initialSourcePaths, onClose, onSave }: P
                   </svg>
                   <span>Cron: {computedCron}</span>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Retention Policy */}
+          <div className="border-t border-gray-800 pt-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <div>
+                <label className="text-sm font-medium text-gray-300">自动清理历史备份 (仅本地)</label>
+                <p className="text-xs text-gray-500">开启后自动删除超出保留期限的历史备份文件</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRetentionEnabled(!retentionEnabled)}
+                className={`w-9 h-4.5 rounded-full transition-colors ${retentionEnabled ? "bg-blue-600" : "bg-gray-700"}`}
+              >
+                <div className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${retentionEnabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
+              </button>
+            </div>
+
+            {retentionEnabled && (
+              <div className="flex items-center gap-3 mt-2">
+                <span className="text-sm text-gray-400">保留时间:</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={retentionDays}
+                  onChange={(e) => setRetentionDays(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-20 px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-100 text-sm text-center focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-sm text-gray-400">天</span>
               </div>
             )}
           </div>

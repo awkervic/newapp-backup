@@ -5,7 +5,7 @@ mod scheduler;
 use std::sync::Mutex;
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
-use backup::{BackupTask, execute_backup};
+use backup::{BackupTask, execute_backup, config_restore_local, config_list_webdav_backups, config_restore_webdav};
 use settings::AppSettings;
 use scheduler::Scheduler;
 use tauri::menu::{Menu, MenuItem};
@@ -223,6 +223,14 @@ pub fn run() {
             // Set up native tray icon
             let _ = setup_tray(app);
 
+            // Handle start minimized command argument for autostart
+            let args: Vec<String> = std::env::args().collect();
+            if args.contains(&"--minimized".to_string()) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -241,7 +249,10 @@ pub fn run() {
             settings_save,
             dialog_open_directory,
             dialog_open_file,
-            app_minimize_to_tray
+            app_minimize_to_tray,
+            config_restore_local,
+            config_list_webdav_backups,
+            config_restore_webdav
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
