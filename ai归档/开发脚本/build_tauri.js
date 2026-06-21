@@ -39,12 +39,12 @@ if (!vcvarsPath) {
 }
 
 // Run node directly on the local tauri.js script to ensure 100% environment variables inheritance
-const buildCommand = `"${vcvarsPath}" && set PATH=C:\\Users\\Dell\\.cargo\\bin;%PATH% && node node_modules/@tauri-apps/cli/tauri.js build`;
+const buildCommand = `"${vcvarsPath}" && set PATH=C:\\Users\\<USER>\\.cargo\\bin;%PATH% && node node_modules/@tauri-apps/cli/tauri.js build`;
 console.log('Executing build command through direct node execution of tauri.js...');
 
 try {
   execSync(buildCommand, {
-    cwd: 'D:\\123123123123\\newapp-backup',
+    cwd: 'D:\\<PROJECT_DIR>\\newapp-backup',
     stdio: 'inherit'
   });
   console.log('Build completed successfully!');

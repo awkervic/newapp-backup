@@ -7,13 +7,8 @@ use tokio::process::Command;
 use tauri::{AppHandle, Emitter, Manager};
 use chrono::{Local, TimeZone};
 
-// Added for streaming upload and progress tracking
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use futures_util::Stream;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio_util::io::ReaderStream;
 
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -258,30 +253,6 @@ pub async fn execute_backup(app: AppHandle, task: BackupTask) -> Result<(), Stri
     Ok(())
 }
 
-struct ProgressStream<S> {
-    inner: S,
-    uploaded: Arc<AtomicU64>,
-}
-
-impl<S, O, E> Stream for ProgressStream<S>
-where
-    S: Stream<Item = Result<O, E>> + Unpin,
-    O: AsRef<[u8]>,
-{
-    type Item = Result<O, E>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<O, E>>> {
-        match Pin::new(&mut self.inner).poll_next(cx) {
-            Poll::Ready(Some(Ok(chunk))) => {
-                let len = chunk.as_ref().len() as u64;
-                self.uploaded.fetch_add(len, Ordering::Relaxed);
-                Poll::Ready(Some(Ok(chunk)))
-            }
-            other => other,
-        }
-    }
-}
-
 fn format_speed(bytes_per_sec: f64) -> String {
     if bytes_per_sec >= 1024.0 * 1024.0 {
         format!("{:.2} MB/s", bytes_per_sec / (1024.0 * 1024.0))
@@ -304,16 +275,14 @@ async fn upload_to_webdav(
     let user = destination.webdav_user.as_deref().unwrap_or("");
     let password = destination.webdav_password.as_deref().unwrap_or("");
 
-    // Use a custom builder with large/no timeout to prevent timeout issues on large uploads
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3600)) // 1 hour timeout
+        .timeout(std::time::Duration::from_secs(3600))
         .connect_timeout(std::time::Duration::from_secs(30))
         .build()?;
 
     let mut base_url = webdav_url.trim_end_matches('/').to_string();
 
     if is_config_backup {
-        // Try creating config-backup folder in the root path using MKCOL
         let folder_url = format!("{}/config-backup", base_url);
         let mut mkcol_req = client.request(reqwest::Method::from_bytes(b"MKCOL")?, &folder_url);
         if !user.is_empty() {
@@ -321,16 +290,20 @@ async fn upload_to_webdav(
         }
         let _ = mkcol_req.send().await;
         base_url = folder_url;
+    } else {
+        let mut mkcol_req = client.request(reqwest::Method::from_bytes(b"MKCOL")?, &base_url);
+        if !user.is_empty() {
+            mkcol_req = mkcol_req.basic_auth(user, Some(password));
+        }
+        let _ = mkcol_req.send().await;
     }
 
-    let mut upload_url = base_url;
-    upload_url.push('/');
-    upload_url.push_str(remote_file_name);
+    let encoded_name = percent_encoding::utf8_percent_encode(remote_file_name, percent_encoding::NON_ALPHANUMERIC).to_string();
+    let upload_url = format!("{}/{}", base_url, encoded_name);
 
     let uploaded = Arc::new(AtomicU64::new(0));
     let upload_finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-    // Spawn progress reporter
     let uploaded_clone = uploaded.clone();
     let upload_finished_clone = upload_finished.clone();
     let app_clone = app.clone();
@@ -367,7 +340,6 @@ async fn upload_to_webdav(
                 last_emit_time = now;
                 last_bytes = bytes;
 
-                // Overall progress goes from 50% to 99% during upload
                 let upload_percent = std::cmp::min((bytes * 49) / total_size, 49) as u32;
                 let overall_percent = 50 + upload_percent;
 
@@ -402,25 +374,47 @@ async fn upload_to_webdav(
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
 
-        // Reset uploaded bytes count
         uploaded.store(0, Ordering::Relaxed);
 
-        let file = match tokio::fs::File::open(local_path).await {
+        let mut file = match tokio::fs::File::open(local_path).await {
             Ok(f) => f,
             Err(e) => {
                 last_error = Some(Box::new(e));
                 continue;
             }
         };
-        let reader_stream = ReaderStream::new(file);
 
-        let progress_stream = ProgressStream {
-            inner: reader_stream,
-            uploaded: uploaded.clone(),
-        };
+        let (body_tx, body_rx) = tokio::sync::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(64);
+        let uploaded_for_tx = uploaded.clone();
 
-        let body = reqwest::Body::wrap_stream(progress_stream);
-        let mut req = client.put(&upload_url).body(body);
+        tauri::async_runtime::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 131072];
+            loop {
+                match file.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let chunk = buf[..n].to_vec();
+                        uploaded_for_tx.fetch_add(n as u64, Ordering::Relaxed);
+                        if body_tx.send(Ok(chunk)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = body_tx.send(Err(e)).await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        let stream = tokio_stream::wrappers::ReceiverStream::new(body_rx);
+        let stream_body = reqwest::Body::wrap_stream(stream);
+
+        let mut req = client
+            .put(&upload_url)
+            .header(reqwest::header::CONTENT_LENGTH, total_size.to_string())
+            .body(stream_body);
 
         if !user.is_empty() {
             req = req.basic_auth(user, Some(password));
@@ -429,13 +423,20 @@ async fn upload_to_webdav(
         match req.send().await {
             Ok(res) => {
                 if res.status().is_success() {
-                    // Success! Stop the reporter and delete file
                     upload_finished.store(true, Ordering::Relaxed);
                     let _ = reporter_handle.await;
                     let _ = fs::remove_file(local_path);
                     return Ok(());
                 } else {
-                    last_error = Some(format!("WebDAV upload failed with status code: {}", res.status()).into());
+                    let status = res.status();
+                    let body_text = res.text().await.unwrap_or_default();
+                    let detail = if body_text.len() > 200 { &body_text[..200] } else { &body_text };
+                    last_error = Some(format!(
+                        "WebDAV 返回错误 {}: {}{}",
+                        status.as_u16(),
+                        status.canonical_reason().unwrap_or("Unknown"),
+                        if detail.is_empty() { String::new() } else { format!(" - {}", detail) }
+                    ).into());
                 }
             }
             Err(e) => {
@@ -444,11 +445,9 @@ async fn upload_to_webdav(
         }
     }
 
-    // Stop the progress reporter
     upload_finished.store(true, Ordering::Relaxed);
     let _ = reporter_handle.await;
 
-    // Always delete local temporary file on final failure
     let _ = fs::remove_file(local_path);
 
     Err(last_error.unwrap_or_else(|| "Unknown upload error".into()))

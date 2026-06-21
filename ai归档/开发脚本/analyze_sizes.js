@@ -20,7 +20,7 @@ function getDirSize(dirPath) {
   return size;
 }
 
-const nodeModulesPath = path.join('D:', '123123123123', 'newapp-backup', 'node_modules');
+const nodeModulesPath = path.join('D:', '<PROJECT_DIR>', 'newapp-backup', 'node_modules');
 if (fs.existsSync(nodeModulesPath)) {
   const dirs = fs.readdirSync(nodeModulesPath);
   const results = [];
